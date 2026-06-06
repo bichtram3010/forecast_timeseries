@@ -1,0 +1,11 @@
+# Python virtual environment
+.venv/
+
+# Data and intermediate files
+mmap/*
+!mmap/feature_cols.json
+parquet/
+
+# Output and generated files
+output/
+figures/
