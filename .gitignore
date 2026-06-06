@@ -5,7 +5,3 @@
 mmap/*
 !mmap/feature_cols.json
 parquet/
-
-# Output and generated files
-output/
-figures/

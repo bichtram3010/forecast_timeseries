@@ -1,0 +1,36 @@
+Category,Metric,Value
+VOLUME,Total Rows,"57,473,650"
+VOLUME,Total Items,"30,490"
+VOLUME,Total Stores,10
+VOLUME,Total Categories,3
+VOLUME,Total Departments,7
+VOLUME,Date Range (days),1884
+VOLUME,Total Sales (units),"64,511,784"
+DISTRIBUTION,Mean Sales,1.1225
+DISTRIBUTION,Std Dev Sales,3.8770
+DISTRIBUTION,Min Sales,0.0000
+DISTRIBUTION,Max Sales,763.0000
+DISTRIBUTION,Skewness,18.1925
+DISTRIBUTION,Coeff of Variation,3.4540
+SEASONALITY,Best Day of Week,Sat
+SEASONALITY,Worst Day of Week,Wed
+SEASONALITY,Best Month,Mar
+SEASONALITY,Worst Month,Apr
+EVENTS,Event Lift (%),+0.00%
+EVENTS,Events (Type 1) Count,"4,695,460"
+EVENTS,SNAP Impact (avg),N/A
+PRICING,Mean Price,3.46
+PRICING,Price Std Dev,3.52
+PRICING,Price-Sales Corr,-0.0507
+PRICING,Price Volatility (top item),15.00
+SPARSITY,Zero Sales %,68.37%
+SPARSITY,Avg Item Zero %,68.37%
+SPARSITY,Items with >75% zeros,"14,632"
+SPARSITY,Avg Item Velocity,0.3163
+QUALITY,Date Coverage %,2.52%
+QUALITY,Price Coverage %,100.00%
+QUALITY,Anomalies (z>2.5),17
+HIERARCHY,Stores per Item (avg),1.0
+HIERARCHY,Items per Store (avg),3049
+HIERARCHY,State with Most Sales,CA
+HIERARCHY,Top Category by Sales,FOODS
