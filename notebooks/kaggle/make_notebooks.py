@@ -97,9 +97,9 @@ def notebook(title: str, intro: str, code_cells: list[list[str]]) -> dict:
     }
 
 
-def main() -> None:
+def main(out_dir: Path = HERE) -> None:
     for name, (title, intro, cells) in NOTEBOOKS.items():
-        path = HERE / name
+        path = out_dir / name
         path.write_text(json.dumps(notebook(title, intro, cells), indent=1) + "\n", encoding="utf-8")
         print(f"wrote {path}")
 
