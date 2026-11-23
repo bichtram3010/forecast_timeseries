@@ -12,7 +12,6 @@ from .data import M5Data, find_data_dir, load_m5
 from .evaluate import evaluate_all
 from .forecasts import discover_forecasts, forecast_path, load_forecast, save_forecast
 from .gbdt import GBDTConfig, completed_weeks, run_gbdt
-from .lstm import LSTMConfig, run_lstm
 from .provenance import run_metadata
 from .report import make_figures, render_results, update_readme
 from .splits import SPLIT_ORIGINS
@@ -76,6 +75,8 @@ def cmd_train_gbdt(args: argparse.Namespace) -> None:
 
 
 def cmd_train_lstm(args: argparse.Namespace) -> None:
+    from .lstm import LSTMConfig, run_lstm
+
     data = M5Data.load(args.data)
     cfg = LSTMConfig(
         hidden=args.hidden,

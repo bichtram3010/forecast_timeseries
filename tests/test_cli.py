@@ -79,3 +79,17 @@ def test_resume_from_two_dirs_with_same_week_raises(tmp_path):
         main(["train-gbdt", "--data", str(prep), "--model", "lgb", "--out", str(tmp_path / "o"),
               "--max-rounds", "5", "--weeks", "2", "--resume-from", str(tmp_path / "a"),
               str(tmp_path / "b")])
+
+
+def test_prepare_does_not_import_torch(tmp_path):
+    import subprocess
+    import sys
+
+    write_m5_files(tmp_path / "raw")
+    code = (
+        "import sys; from m5.cli import main; "
+        f"main(['prepare', '--data-dir', {str(tmp_path / 'raw')!r}, '--out', {str(tmp_path / 'p')!r}]); "
+        "assert 'torch' not in sys.modules, 'torch was imported'"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
