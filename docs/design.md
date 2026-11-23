@@ -84,17 +84,21 @@ src/m5/
   report.py      results/ to README tables and figures
   cli.py         m5 prepare | train-gbdt | train-lstm | evaluate | report
 notebooks/kaggle/
-  01_prepare.ipynb  02_gbdt.ipynb  03_lstm.ipynb  04_evaluate.ipynb
+  01_lightgbm.ipynb  02_catboost.ipynb  03_lstm.ipynb  04_evaluate.ipynb
+  make_notebooks.py  generates the four notebooks
 tests/              pytest on small synthetic M5-shaped data
 results/            CSV scores and metadata.json
 figures/            generated from results/
 legacy/             previous notebook, EDA figures and outputs, with a short note
 docs/design.md      this document
-pyproject.toml      pinned dependencies
+pyproject.toml      minimum dependency versions; exact versions of each run go to results/metadata.json
 .github/workflows/ci.yml   ruff and pytest
 ```
 
-Each Kaggle notebook installs the package from GitHub at a pinned commit, calls one CLI command, and saves its outputs as the input of the next notebook. If a notebook cannot reach the internet, the repository is attached as a Kaggle dataset instead.
+Each Kaggle notebook installs the package from GitHub at a pinned commit with `pip install --no-deps`
+(Kaggle's preinstalled libraries are used and their versions are recorded), runs `m5 prepare`, and
+calls one CLI command. Notebooks 01 to 03 write forecasts; notebook 04 takes their outputs as inputs.
+If a notebook cannot reach the internet, the repository is attached as a Kaggle dataset instead.
 
 ## 7. Tests
 
@@ -111,7 +115,7 @@ The development machine has no Python, so tests run only in GitHub Actions.
 ## 8. Running on Kaggle
 
 1. The repository owner signs in to Kaggle and accepts the M5 competition rules.
-2. Notebooks 01 to 04 run in order. Budget: about 6 to 10 hours of CPU and GPU time, within one week of the free GPU quota.
+2. Notebooks 01 to 03 run (01 on CPU, 02 and 03 on GPU, possibly at the same time), then 04. Budget: about 6 to 10 hours of CPU and GPU time, within one week of the free GPU quota.
 3. `results/` and `figures/` are downloaded into the repository, and the README is regenerated with `m5 report`.
 
 If LightGBM on 4 CPU cores is too slow, the fallback is to train on a fixed 50% row sample; this is recorded in the README if used.
