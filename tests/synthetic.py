@@ -35,7 +35,7 @@ def make_ids(n_items_per_dept: int = 2) -> pd.DataFrame:
 
 def make_calendar(n_days: int = N_DAYS_CALENDAR) -> pd.DataFrame:
     dates = pd.date_range("2011-01-29", periods=n_days, freq="D")
-    wday = ((dates.dayofweek + 2) % 7) + 1  # M5: 1 = Saturday ... 7 = Friday
+    wday = ((dates.day_of_week + 2) % 7) + 1  # M5: 1 = Saturday ... 7 = Friday
     cal = pd.DataFrame(
         {
             "date": dates.strftime("%Y-%m-%d"),
