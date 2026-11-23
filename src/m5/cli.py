@@ -105,7 +105,15 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         p.stem.removeprefix("meta_"): json.loads(p.read_text(encoding="utf-8"))
         for p in sorted(Path(args.forecasts).rglob("meta_*.json"))
     }
-    _write_json(args.results / "metadata.json", {"evaluate": run_metadata(), "models": models})
+    evaluate_meta = run_metadata()
+    commits = {name: meta.get("commit") for name, meta in models.items()}
+    consistent = set(commits.values()) <= {evaluate_meta["commit"]}
+    if not consistent:
+        print(f"WARNING: runs used different commits: {commits} (evaluate: {evaluate_meta['commit']})")
+    _write_json(
+        args.results / "metadata.json",
+        {"evaluate": evaluate_meta, "models": models, "commits_consistent": consistent},
+    )
     print(scores[scores["metric"] == "wrmsse"].to_string(index=False))
 
 

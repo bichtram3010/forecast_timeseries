@@ -27,6 +27,7 @@ def test_full_pipeline(tmp_path):
     assert set(meta["models"]) == {"lgb", "cb", "lstm"}
     assert "best_iterations" in meta["models"]["lgb"]
     assert "best_epoch" in meta["models"]["lstm"]
+    assert meta["commits_consistent"] is True
 
     readme = tmp_path / "README.md"
     readme.write_text(f"# T\n{RESULTS_START}\nSTALE-PLACEHOLDER\n{RESULTS_END}\n", encoding="utf-8")
