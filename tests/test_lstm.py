@@ -66,3 +66,16 @@ def test_not_on_sale_gets_zero(m5data):
 def test_too_short_training_range_raises(m5data):
     with pytest.raises(ValueError):
         train_lstm(m5data, SMALL, fit_origin=1200, epochs=1, train_start=1190)
+
+
+def test_training_ignores_sales_after_fit_origin(m5data):
+    cfg = LSTMConfig(hidden=8, epochs=1, patience=1, batch_size=8, origins_per_epoch=1)
+    sales = m5data.sales.copy()
+    sales[:, 1913:] = 1000
+    altered = dataclasses.replace(m5data, sales=sales)
+    model_a, _ = train_lstm(m5data, cfg, fit_origin=1913, epochs=1, train_start=1800)
+    model_b, _ = train_lstm(altered, cfg, fit_origin=1913, epochs=1, train_start=1800)
+    state_a, state_b = model_a.state_dict(), model_b.state_dict()
+    assert state_a.keys() == state_b.keys()
+    for key in state_a:
+        assert torch.equal(state_a[key], state_b[key]), key
