@@ -93,7 +93,7 @@ def notebook(title: str, intro: str, code_cells: list[list[str]]) -> dict:
             "language_info": {"name": "python"},
         },
         "nbformat": 4,
-        "nbformat_minor": 5,
+        "nbformat_minor": 4,
     }
 
 
