@@ -20,7 +20,7 @@ No target score is promised. Whatever the holdout says is what gets reported, in
 ## 2. Data
 
 - Source: the official Kaggle competition files `sales_train_evaluation.csv` (30,490 series, days d_1 to d_1941), `calendar.csv` and `sell_prices.csv` from `m5-forecasting-accuracy`.
-- Wide sales table melted to long format (`id, d, sales`), joined with calendar and prices, dtypes downcast (`int16`, `float32`, `category`), cached as Parquet.
+- The wide sales table is kept as `(series x day)` numpy arrays, with calendar and prices as separate arrays and tables (not melted to long format); dtypes are downcast and everything is cached as `.npy` plus Parquet.
 - Rows where `sell_price` is missing (item not on sale yet) are dropped.
 - Training rows start at d_1100. Earlier days are kept only as history for lags and rolling windows.
 
@@ -63,7 +63,7 @@ For the week-k model, every sales-history feature uses only data at least `L = 7
 | Seasonal naive, MA28 | Baselines, no training |
 | LightGBM × 4 weeks | Tweedie loss (variance power 1.1), CPU, fixed parameters in code, early stopping on the validation days of week k |
 | CatBoost × 4 weeks | Tweedie loss (variance power 1.1), GPU, same features, early stopping as above |
-| LSTM (one model) | PyTorch. Input: last 112 days of sales divided by the window mean, ID embeddings (item, department, store), and calendar, price and SNAP for the 28 future days. 2-layer LSTM encoder (hidden 128) and an MLP head with 28 non-negative outputs, rescaled. Tweedie deviance loss. Training windows sampled from origins inside the training period; early stopping on the validation origin |
+| LSTM (one model) | PyTorch. Input: last 112 days of sales divided by the window mean plus 1, ID embeddings (item, department, store), and calendar, price and SNAP for the 28 future days. 2-layer LSTM encoder (hidden 128) and an MLP head with 28 non-negative outputs, rescaled. Tweedie deviance loss. Training windows sampled from origins inside the training period; early stopping on the validation origin |
 | Ensemble | Weighted mean of LightGBM, CatBoost and LSTM. Weights on a 0.1-step simplex grid (66 combinations), chosen by validation WRMSSE, then frozen |
 
 Seeds are fixed. Each model writes bottom-level forecasts as `(id, d, forecast)` Parquet files, so the order of rows can never mix series.
@@ -72,7 +72,7 @@ Seeds are fixed. Each model writes bottom-level forecasts as `(id, d, forecast)`
 
 ```text
 src/m5/
-  data.py        load official files, melt, join, downcast, Parquet cache
+  data.py        load official files, keep (series x day) arrays, downcast, .npy + Parquet cache
   splits.py      day constants and window helpers
   features.py    week-k features (lag >= 7k)
   baselines.py   seasonal naive, MA28
@@ -110,13 +110,15 @@ If a notebook cannot reach the internet, the repository is attached as a Kaggle 
 - Ensemble weight search picks the known best weights on a constructed case.
 - Smoke tests: LightGBM, CatBoost and LSTM fit and predict on a few hundred rows on CPU, with output shape and non-negativity checks.
 
-The development machine has no Python, so tests run only in GitHub Actions.
+Tests run locally (uv-managed Python) and in GitHub Actions.
 
 ## 8. Running on Kaggle
 
 1. The repository owner signs in to Kaggle and accepts the M5 competition rules.
 2. Notebooks 01 to 03 run (01 on CPU, 02 and 03 on GPU, possibly at the same time), then 04. Budget: about 6 to 10 hours of CPU and GPU time, within one week of the free GPU quota.
 3. `results/` and `figures/` are downloaded into the repository, and the README is regenerated with `m5 report`.
+
+LightGBM on 4 CPU cores may not finish four weekly models in one 12-hour session. `m5 train-gbdt` saves each finished week as a part file, so the four weeks can run across two sessions with `--weeks` and `--resume-from` (notebook 01 has the two variables for this).
 
 If LightGBM on 4 CPU cores is too slow, the fallback is to train on a fixed 50% row sample; this is recorded in the README if used.
 
