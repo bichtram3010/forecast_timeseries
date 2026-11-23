@@ -1,51 +1,112 @@
-# forecast_timeseries
+<div align="center">
 
-Global gradient-boosting forecasts for the **M5 Forecasting (Walmart) dataset**: 28-day-ahead unit sales for 30,490 item x store series, built to fit in a 30 GB Kaggle notebook.
+# M5 Sales Forecasting
 
-> **Status:** work in progress. The pipeline runs end to end and produces a submission file, but the validation setup has known issues (see [Known limitations](#known-limitations)). Please read that section before quoting any number from this repo.
+**One global gradient-boosting model that forecasts 28 days of Walmart sales for 30,490 product × store series, on a single 30 GB Kaggle notebook.**
 
-## What is in this repo
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white) ![LightGBM](https://img.shields.io/badge/LightGBM-4.6-2E8B57) ![XGBoost](https://img.shields.io/badge/XGBoost-3.2-EB6E1F) ![Kaggle](https://img.shields.io/badge/runs%20on-Kaggle-20BEFF?logo=kaggle&logoColor=white) ![License](https://img.shields.io/badge/license-GPL--3.0-blue) ![Status](https://img.shields.io/badge/status-re--run%20pending-lightgrey)
 
-| Path | What it is |
+[Highlights](#highlights) · [Self-audit](#what-i-found-when-i-audited-my-own-pipeline) · [Pipeline](#pipeline) · [Data](#data) · [Results](#results) · [How to run](#how-to-run) · [Limitations](#known-limitations)
+
+</div>
+
+---
+
+## Highlights
+
+| 🧠 Modelling | ⚙️ Engineering | 🔍 Evaluation |
+|---|---|---|
+| One global model for all 30,490 series with 44 features; an ensemble of 4 LightGBM objectives (Tweedie 1.1 / 1.5, Poisson, RMSE) and XGBoost (Tweedie 1.1), weighted by inverse validation RMSE | 59M rows on a 30 GB machine: chunked CSV → Snappy Parquet, features streamed column by column into `np.memmap`, 40% row sample (22.6M rows), GPU first with CPU fallback | Recursive 28-day forecast with real sales hidden, the same way the test period is forecast; four leakage and evaluation bugs found and fixed in a self-audit |
+
+## At a glance
+
+| | |
 |---|---|
-| `timeseries-forecast (1).ipynb` | The whole pipeline as one Kaggle notebook (7 cells, saved with outputs) |
-| `figures/01_...14_*.png` | 14 EDA figures (distribution, trends, seasonality, events/SNAP, prices, sparsity, outliers, hierarchy, data quality, correlations, decomposition, lag correlation) |
-| `output/eda_summary.csv` | Summary statistics produced by the EDA cell |
-| `mmap/feature_cols.json` | The 49 feature names fed to the models, in order |
-| `LICENSE` | License |
+| **Problem** | Daily sales of 3,049 products in 10 stores (CA, TX, WI). About 68% of product-days have zero sales, so demand is intermittent and heavily skewed |
+| **Model** | One global model for all 30,490 series, 44 features, 5-model ensemble |
+| **Forecasting** | Recursive: forecast day *d*, then feed that forecast into the lag and rolling features of day *d + 1*, for 28 days |
+| **Evaluation** | The 28 validation days are forecast recursively with their real sales hidden |
+| **Status** | Leakage and evaluation bugs found in review are fixed (see below). The notebook is being re-run; scores will be added here when it finishes |
 
-Raw data, parquet files and memmaps are **not** committed (see `.gitignore`).
+## What I found when I audited my own pipeline
+
+My first version reported a bottom-level WAPE of about 42.6% on validation. When I reviewed the code I found that this number could not be trusted, for four reasons:
+
+| Problem | Evidence | Fix |
+|---|---|---|
+| **Target leakage in `zero_streak`.** The feature counted the target day's own sales, so a value of 0 meant "this item sold something today" | It was the strongest feature by gain (3.3e8, 2.6× the next one) | Count zero-sales days up to **yesterday** only |
+| **Validation was a 1-day-ahead score.** Validation lags were built from the real validation sales, while the test period has to be forecast 28 days ahead | Recursive test forecasts averaged 0.26 to 0.34 units per series-day, against about 1.12 in history | Hide validation sales and forecast all 28 days recursively, exactly like test |
+| **Two prediction arrays blended in different row orders.** One was ordered series-then-day, the other day-then-series | The 50/50 blend mixed values from different series and days | Remove the blend; save every forecast together with its series id and day |
+| **Same-day aggregate features.** Store / department / category / global means of the *same day's* sales were features, but they are unknown at forecast time (0 on test days) | Train/test mismatch | Drop them; `item_gmean` now uses training rows only |
+
+The fix is in [PR #1](https://github.com/bichtram3010/forecast_timeseries/pull/1).
+
+> [!TIP]
+> **Lesson learned:** for time series, judge a model by a score computed exactly the way it will be used, and treat any surprisingly dominant feature as a leakage suspect until proven otherwise.
+
+## Pipeline
+
+```mermaid
+flowchart LR
+    A[train / val / test CSV] -->|500k-row chunks| B[Snappy Parquet]
+    B --> C[Features<br/>calendar, events, SNAP, price,<br/>lags and rolling stats up to yesterday]
+    C -->|stream by column| D[np.memmap<br/>X_tr, X_val]
+    D --> E[Train 5 models<br/>40% row sample]
+    E --> F[Ensemble weights]
+    F --> G[Recursive 28-day forecast<br/>validation: scored<br/>test: submission]
+    G --> H[Hierarchical reconciliation<br/>experimental]
+```
+
+Everything lives in one notebook, [`timeseries-forecast (1).ipynb`](timeseries-forecast%20(1).ipynb):
+
+| Cell | Step | Output |
+|:---:|---|---|
+| 0 | `pip install` | |
+| 1 | EDA: streams the training data and draws 14 figures | `figures/`, `output/eda_summary.csv` |
+| 2 | Data prep: chunked CSV to Parquet, feature engineering, memmaps | `mmap/` |
+| 3 | Train LightGBM (Tweedie 1.1) and XGBoost (Tweedie 1.1) | `models/lgb.txt`, `models/xgb.json` |
+| 4 | Train LightGBM with Tweedie 1.5, Poisson and RMSE objectives, compute ensemble weights | `models/`, `preds/ensemble_weights.json` |
+| 5 | Recursive forecast: 28 validation days (scored) and 28 test days | `output/metrics_recursive_val.csv`, `output/submission_recursive.csv` |
+| 6 | Hierarchical reconciliation toward state-level totals (experimental) | `output/submission_reconciled.csv` |
+
+Cells 3 and 4 also print a *one-step* validation score (true sales as lag inputs). That score is only used for early stopping and ensemble weights, not for reporting.
+
+<details>
+<summary><b>Features (44)</b></summary>
+
+| Group | Features |
+|---|---|
+| Calendar | `wday`, `month`, `year`, `quarter`, `is_weekend`, `day_of_month`, `is_payday` |
+| Events and SNAP | `event_type_1_enc`, `event_type_2_enc`, `has_event`, `snap_CA/TX/WI` and their interactions with events and weekday |
+| Price | `sell_price`, `price_ratio`, `price_norm` |
+| IDs (label-encoded) | series, item, department, category, store, state |
+| Sales history (up to yesterday only) | `lag_1/7/14/28`, `rmean_7/14/28`, `rstd_28`, `rmax_7`, `ewm_01`, `ewm_05`, `lag1_diff`, `trend_7`, `zero_streak` |
+| Item level | `item_gmean` (training rows only), `vs_item` |
+
+The full ordered list is in [`mmap/feature_cols.json`](mmap/feature_cols.json).
+
+</details>
 
 ## Data
 
-- M5 Forecasting - Accuracy (Walmart): 3,049 items, 10 stores in CA / TX / WI, 3 categories, 7 departments, so 30,490 bottom-level series.
-- About 68% of item-day sales are zero (intermittent demand). Mean sales per item-day is about 1.12 with heavy right skew (skewness about 18).
-- The notebook reads CSVs prepared in a Kaggle dataset (`/kaggle/input/datasets/minhduylebao/dataeda`, files `train.csv`, `val.csv`, `test.csv`). You need to point `DATA_DIR` to your own copy.
+**M5 Forecasting - Accuracy** (Walmart): 3,049 items, 10 stores in 3 states, 3 categories, 7 departments, 30,490 bottom-level series, 1,941 days (1,885 train, 28 validation, 28 test).
 
-## Pipeline (notebook cells)
+| | |
+|---|---|
+| **Intermittent demand.** Most product-days sell nothing, and the non-zero sales are heavily right-skewed | **Weekly seasonality and a slow upward trend.** Stores close on Christmas Day (the drops to zero) |
+| ![Sales distribution](figures/01_distribution.png) | ![Seasonal decomposition of daily total sales](figures/12_seasonal_decompose.png) |
 
-| Cell | Step | Notes |
-|---|---|---|
-| 0 | `pip install` | catboost, xgboost, lightgbm, torch, etc. |
-| 1 | EDA | Streams the data in 1M-row chunks, writes the 14 figures and `eda_summary.csv` |
-| 2 | Data prep and features | CSV to Snappy Parquet in 500k-row chunks, per-store feature engineering written to `np.memmap` so RAM stays low. This cell also contains a first training attempt, but its saved output ends right after a LightGBM GPU error and CPU fallback; the training results come from cell 3 |
-| 3 | Training (v3) | Random 40% subsample of the training rows (22.6M of 56.6M), LightGBM (Tweedie 1.1) and XGBoost (Tweedie 1.1), GPU first with CPU fallback |
-| 4 | Recursive forecast | Predicts day by day for 28 days, feeding predictions back into lag/rolling features |
-| 5 | Multi-loss ensemble | Adds LightGBM with Tweedie 1.5, Poisson and RMSE objectives, inverse-RMSE weighted blend, then blended 50/50 with the recursive output |
-| 6 | Hierarchical reconciliation (experimental) | Forecasts state and store totals with an exponential moving average plus weekday profile, then rescales the bottom-level forecasts toward them |
-
-### Features (49)
-
-- Calendar: `wday`, `month`, `year`, `quarter`, `is_weekend`, `day_of_month`, `is_payday`
-- Events and SNAP: `event_type_1_enc`, `event_type_2_enc`, `has_event`, `snap_CA/TX/WI` and their interactions with events and weekday
-- Price: `sell_price`, `price_ratio`, `price_norm`
-- Label-encoded ids: item, dept, cat, store, state
-- Lags and rolling stats: `lag_1/7/14/28`, `rmean_7/14/28`, `rstd_28`, `rmax_7`, `ewm_01`, `ewm_05`, `lag1_diff`, `trend_7`, `zero_streak`
-- Aggregates: `item_gmean`, `store_day_mean`, `dept_day_mean`, `cat_day_mean`, `global_day_mean`, `vs_store`, `vs_item`
+*Both figures come from a random row sample of the training data, so levels are lower than the full totals. More EDA figures are in [`figures/`](figures/).*
 
 ## Results
 
-Metrics below are on the 28-day validation block (853,720 rows = 28 days x 30,490 series), **at the bottom level (item x store) only**, as printed in the notebook.
+> [!NOTE]
+> **Pending re-run.** The 28-day recursive validation scores (MAE, RMSE, WAPE, bias per model and for the ensemble) will be written to `output/metrics_recursive_val.csv` and added here.
+
+<details>
+<summary>Old numbers from the leaky pipeline (do not use)</summary>
+
+These came from the first version, before the fixes above. They are one-step scores with a leaking feature, so they overstate accuracy.
 
 | Model | MAE | RMSE | WAPE % | Bias % |
 |---|---|---|---|---|
@@ -57,31 +118,47 @@ Metrics below are on the 28-day validation block (853,720 rows = 28 days x 30,49
 | Ensemble (LGB + XGB) | 0.5907 | 1.6494 | 42.61 | +1.01 |
 | Ensemble (5 models) | 0.5953 | 1.6508 | 42.93 | +1.40 |
 
-Not available yet in this repo: WRMSSE (the official M5 metric), WAPE at total / state / store level, and a comparison against LSTM or other baselines.
+</details>
 
 ## How to run
 
-1. Create a Kaggle notebook with a GPU (optional) and about 30 GB of RAM.
-2. Attach a dataset containing the M5 `train.csv`, `val.csv`, `test.csv` in the layout the notebook expects, and edit `DATA_DIR` in cells 1 and 2.
-3. Run the cells in order. Approximate wall times from the saved outputs: training (cell 3) about 30 min, recursive forecast (cell 4) about 18 min, multi-loss ensemble (cell 5) about 73 min, reconciliation (cell 6) under 1 min.
-4. Outputs are written to `/kaggle/working/` (`figures/`, `output/`, `models/`, `preds/`, and the `submission_*.csv` files).
+1. Create a Kaggle notebook with about 30 GB of RAM (a GPU is optional).
+2. Attach a dataset with the M5 data as `train.csv`, `val.csv`, `test.csv` (one row per series and day), and set `DATA_DIR` in cells 1 and 2.
+3. Start from an empty `/kaggle/working/` and run the cells in order. Cells 3 and 4 skip training when model and prediction files already exist, so files from an older run would be reused.
 
-There is no `requirements.txt` yet; the packages are installed by the first cell.
+| Step | Approx. wall time (previous run) |
+|---|---|
+| Cell 3, training | ~30 min |
+| Cell 4, training | ~70 min |
+| Cell 5, recursive forecast | ~36 min (estimated) |
+| Cell 6, reconciliation | < 1 min |
+
+## Repository layout
+
+```text
+.
+├── timeseries-forecast (1).ipynb   # the whole pipeline (cells 0-6)
+├── figures/                        # 14 EDA figures from cell 1
+├── mmap/feature_cols.json          # ordered list of the 44 model features
+├── output/eda_summary.csv          # EDA summary (see known limitations)
+└── LICENSE
+```
 
 ## Known limitations
 
-These are open issues found while reviewing the saved notebook. They affect how far the numbers above can be trusted.
+- **No scores yet** after the fixes; see [Results](#results).
+- Early stopping and ensemble weights use the one-step score on the same validation block that is later scored recursively, so the recursive score can still be slightly optimistic.
+- The reconciliation in cell 6 uses a simple weekday-profile average for the state totals, not a trained model; it needs to be checked again once the bottom-level forecasts are fixed.
+- The EDA cell has known aggregation bugs: event lift 0%, SNAP impact N/A, date coverage 2.52% and 1.0 stores per item in `output/eda_summary.csv` are wrong (they also show up in some panels of `figures/03`, `06` and `08`), and its sample is much larger than intended.
+- Hard-coded Kaggle paths, everything in one notebook, no pinned dependencies.
 
-1. **Possible target leakage in validation.** `store_day_mean`, `dept_day_mean`, `cat_day_mean` and `global_day_mean` are the mean of the *same day's actual sales*, computed on train + validation rows (cell 2). They are filled with 0 on the test days. Validation scores are therefore likely optimistic, and the train/test mismatch can push test forecasts down. `item_gmean` also includes validation rows.
-2. **Recursive forecasts look too low.** The mean predicted value per series-day is about 0.26 to 0.34, against about 1.12 in the history.
-3. **Reconciliation step is unreliable.** In cell 6 the bottom-up state totals are only about 25% of the top-level estimates, and the correction factor is clipped at 2.0 for all three states, so the two levels are not actually reconciled. The top level is an exponential moving average, not a trained model.
-4. **EDA summary has wrong values** (event lift 0%, SNAP impact N/A, date coverage 2.52%, stores per item 1.0) caused by bugs in the EDA aggregation.
-5. **Not easy to reproduce:** hard-coded Kaggle paths, several scripts pasted into one notebook, GPU failure with CPU fallback, no pinned dependencies, no saved submission or leaderboard score.
-6. CatBoost and LSTM code appears in the early pipeline cell and in older scripts, but no CatBoost or LSTM results are reported here.
+## Next steps
 
-## Planned next steps
+- [ ] Re-run and publish the recursive validation scores, compared with a seasonal-naive baseline
+- [ ] Report WAPE at total, state and store level, and the official M5 metric (WRMSSE)
+- [ ] Fix the EDA aggregation bugs and the reconciliation step
+- [ ] Split the notebook into scripts and add `requirements.txt`
 
-- Remove the same-day aggregate features, or lag them, and re-run validation.
-- Compute WRMSSE and WAPE at every hierarchy level on a proper rolling-origin hold-out.
-- Fix the reconciliation (for example bottom-up with MinT) and the EDA summary.
-- Split the notebook into scripts, add `requirements.txt`, and commit the submission file and score.
+## License
+
+GPL-3.0, see [LICENSE](LICENSE).
