@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -147,25 +150,71 @@ def forecast_split(models: dict[int, object], data: M5Data, origin: int, kind: s
     return out
 
 
+def _part_path(parts_dir: Path, kind: str, week: int) -> Path:
+    return Path(parts_dir) / f"{kind}_w{week}.npz"
+
+
+def completed_weeks(parts_dir: Path, kind: str) -> list[int]:
+    """Weeks (1..4) that have a finished part file in `parts_dir`."""
+    return [w for w in range(1, N_WEEKS + 1) if _part_path(parts_dir, kind, w).exists()]
+
+
+def _save_part(path: Path, validation: np.ndarray, holdout: np.ndarray, best: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "wb") as handle:
+        np.savez(handle, validation=validation, holdout=holdout, best=best)
+    os.replace(tmp, path)
+
+
+def _train_week(data: M5Data, cfg: GBDTConfig, week: int, train_start: int):
+    train = build_frame(data, week, fit_days(VAL_ORIGIN, train_start))
+    valid = build_frame(data, week, target_days(VAL_ORIGIN, week))
+    model, best = fit(train, valid, week, cfg)
+    del train, valid
+    validation = forecast_split({week: model}, data, VAL_ORIGIN, cfg.kind)
+    refit = build_frame(data, week, fit_days(HOLDOUT_ORIGIN, train_start))
+    model, _ = fit(refit, None, week, cfg, rounds=best)
+    del refit
+    holdout = forecast_split({week: model}, data, HOLDOUT_ORIGIN, cfg.kind)
+    return validation, holdout, best
+
+
 def run_gbdt(
-    data: M5Data, cfg: GBDTConfig, train_start: int = TRAIN_START
+    data: M5Data,
+    cfg: GBDTConfig,
+    train_start: int = TRAIN_START,
+    weeks: tuple[int, ...] = tuple(range(1, N_WEEKS + 1)),
+    parts_dir: Path | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[int, int]]:
     """Per week: fit with early stopping (origin 1885), forecast validation,
-    refit on data up to 1913 with the same iteration count, forecast holdout."""
+    refit on data up to 1913 with the same iteration count, forecast holdout.
+
+    With `parts_dir`, each finished week is saved as `{kind}_w{week}.npz` and skipped on a
+    rerun; the result then sums every part present (not only the requested weeks)."""
     forecasts = {
         "validation": np.zeros((data.n_series, HORIZON), dtype=np.float32),
         "holdout": np.zeros((data.n_series, HORIZON), dtype=np.float32),
     }
     best: dict[int, int] = {}
-    for week in range(1, N_WEEKS + 1):
-        train = build_frame(data, week, fit_days(VAL_ORIGIN, train_start))
-        valid = build_frame(data, week, target_days(VAL_ORIGIN, week))
-        model, best[week] = fit(train, valid, week, cfg)
-        del train, valid
-        forecasts["validation"] += forecast_split({week: model}, data, VAL_ORIGIN, cfg.kind)
-        refit = build_frame(data, week, fit_days(HOLDOUT_ORIGIN, train_start))
-        model, _ = fit(refit, None, week, cfg, rounds=best[week])
-        del refit
-        forecasts["holdout"] += forecast_split({week: model}, data, HOLDOUT_ORIGIN, cfg.kind)
-        print(f"[{cfg.kind}] week {week}: best iteration {best[week]}", flush=True)
+    for week in weeks:
+        if parts_dir is not None and _part_path(parts_dir, cfg.kind, week).exists():
+            print(f"[{cfg.kind}] week {week}: already done, skipping", flush=True)
+            continue
+        started = time.time()
+        validation, holdout, best_iter = _train_week(data, cfg, week, train_start)
+        if parts_dir is not None:
+            _save_part(_part_path(parts_dir, cfg.kind, week), validation, holdout, best_iter)
+        else:
+            forecasts["validation"] += validation
+            forecasts["holdout"] += holdout
+            best[week] = best_iter
+        elapsed = time.time() - started
+        print(f"[{cfg.kind}] week {week}: best iteration {best_iter}, {elapsed:.0f} s", flush=True)
+    if parts_dir is not None:
+        for week in completed_weeks(parts_dir, cfg.kind):
+            with np.load(_part_path(parts_dir, cfg.kind, week)) as part:
+                forecasts["validation"] += part["validation"]
+                forecasts["holdout"] += part["holdout"]
+                best[week] = int(part["best"])
     return forecasts, best

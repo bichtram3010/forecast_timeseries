@@ -13,6 +13,19 @@ INSTALL = [
     "!m5 --help",
 ]
 PREPARE = ["!m5 prepare --data-dir /kaggle/input --out /kaggle/working/m5data"]
+GBDT_SESSIONS = [
+    '# LightGBM may need two sessions. Session 1: WEEKS = "1 2", RESUME = "".\n',
+    "# Session 2: attach session 1's output as an input, then "
+    'WEEKS = "3 4", RESUME = "--resume-from /kaggle/input".\n',
+    'WEEKS = "1 2 3 4"\n',
+    'RESUME = ""',
+]
+CATBOOST_SESSIONS = [
+    "# CatBoost on the GPU usually fits in one session. If it does not, use WEEKS and RESUME\n",
+    "# as in the LightGBM notebook (attach the first session's output as an input).\n",
+    'WEEKS = "1 2 3 4"\n',
+    'RESUME = ""',
+]
 CLEANUP = ["!rm -rf /kaggle/working/m5data"]
 
 NOTEBOOKS = {
@@ -21,8 +34,10 @@ NOTEBOOKS = {
         "Settings: Accelerator None, Internet on. Input: the m5-forecasting-accuracy competition.",
         [
             INSTALL,
+            GBDT_SESSIONS,
             PREPARE,
-            ["!m5 train-gbdt --data /kaggle/working/m5data --model lgb --out /kaggle/working/forecasts"],
+            ["!m5 train-gbdt --data /kaggle/working/m5data --model lgb "
+             "--out /kaggle/working/forecasts --weeks {WEEKS} {RESUME}"],
             CLEANUP,
         ],
     ),
@@ -31,9 +46,10 @@ NOTEBOOKS = {
         "Settings: Accelerator GPU T4, Internet on. Input: the m5-forecasting-accuracy competition.",
         [
             INSTALL,
+            CATBOOST_SESSIONS,
             PREPARE,
             ["!m5 train-gbdt --data /kaggle/working/m5data --model cb --device gpu "
-             "--out /kaggle/working/forecasts"],
+             "--out /kaggle/working/forecasts --weeks {WEEKS} {RESUME}"],
             CLEANUP,
         ],
     ),

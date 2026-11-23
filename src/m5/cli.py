@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from dataclasses import asdict
 from pathlib import Path
 
 from .data import M5Data, find_data_dir, load_m5
 from .evaluate import evaluate_all
 from .forecasts import discover_forecasts, forecast_path, load_forecast, save_forecast
-from .gbdt import GBDTConfig, run_gbdt
+from .gbdt import GBDTConfig, completed_weeks, run_gbdt
 from .lstm import LSTMConfig, run_lstm
 from .provenance import run_metadata
 from .report import make_figures, render_results, update_readme
@@ -35,6 +36,20 @@ def cmd_prepare(args: argparse.Namespace) -> None:
     print(f"saved {data.n_series} series x {data.n_days} days to {args.out}")
 
 
+def _collect_parts(resume_dirs: list[Path], parts: Path, kind: str) -> None:
+    """Copy part files of earlier sessions into `parts`; never overwrite, reject duplicates."""
+    found: dict[str, Path] = {}
+    for folder in resume_dirs:
+        for path in sorted(Path(folder).rglob(f"{kind}_w[1-4].npz")):
+            if path.name in found:
+                raise ValueError(f"{path.name} found twice: {found[path.name]} and {path}")
+            found[path.name] = path
+    parts.mkdir(parents=True, exist_ok=True)
+    for name, path in found.items():
+        if not (parts / name).exists():
+            shutil.copy2(path, parts / name)
+
+
 def cmd_train_gbdt(args: argparse.Namespace) -> None:
     data = M5Data.load(args.data)
     cfg = GBDTConfig(
@@ -44,7 +59,17 @@ def cmd_train_gbdt(args: argparse.Namespace) -> None:
         device=args.device,
         cb_loss=args.cb_loss,
     )
-    forecasts, best = run_gbdt(data, cfg)
+    parts = args.out / "parts"
+    _collect_parts(args.resume_from or [], parts, args.model)
+    forecasts, best = run_gbdt(data, cfg, weeks=tuple(args.weeks), parts_dir=parts)
+    done = completed_weeks(parts, args.model)
+    if done != [1, 2, 3, 4]:
+        missing = [w for w in (1, 2, 3, 4) if w not in done]
+        print(
+            f"weeks done: {done}; still missing: {missing}; "
+            f"rerun with --resume-from {args.out} --weeks {' '.join(map(str, missing))}"
+        )
+        return
     _save_all(args.out, args.model, forecasts, data)
     meta = run_metadata({"model": args.model, "config": asdict(cfg), "best_iterations": best})
     _write_json(args.out / f"meta_{args.model}.json", meta)
@@ -107,6 +132,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sample-frac", type=float, default=1.0)
     p.add_argument("--device", choices=["cpu", "gpu"], default="cpu")
     p.add_argument("--cb-loss", default="Tweedie:variance_power=1.1")
+    p.add_argument("--weeks", nargs="+", type=int, choices=[1, 2, 3, 4], default=[1, 2, 3, 4])
+    p.add_argument("--resume-from", nargs="*", type=Path, default=None)
     p.set_defaults(func=cmd_train_gbdt)
 
     p = sub.add_parser("train-lstm", help="train the LSTM")
